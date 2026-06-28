@@ -90,13 +90,28 @@ expect "edited inventory plans updates" "$(ops_count p3.json)" "2"
 got="$(sqlite3 store.db "SELECT json_extract(attrs_json,'\$.status') FROM alembic_objects WHERE type_name='dcim.site';")"
 expect "update persisted to sqlite" "$got" "planned"
 
-# delete: drop the device, allow deletes
-python3 - <<'PY'
-import yaml
-d=yaml.safe_load(open('inv2.yaml'))
-d['objects']=[o for o in d['objects'] if o['type']!='dcim.device']
-yaml.safe_dump(d, open('inv3.yaml','w'))
-PY
+# delete: same intent minus the device (written directly so we need no yaml lib)
+cat > inv3.yaml <<'EOF'
+schema:
+  types:
+    dcim.site:
+      key: { slug: { type: slug } }
+      fields:
+        name:   { type: string }
+        slug:   { type: slug }
+        status: { type: string }
+    dcim.device:
+      key: { name: { type: slug } }
+      fields:
+        name:   { type: string }
+        site:   { type: ref, target: dcim.site }
+        status: { type: string }
+objects:
+  - uid: "a4d6a0c3-4e73-4a76-b216-4d38f8c55f3d"
+    type: dcim.site
+    key:   { slug: "fra1" }
+    attrs: { name: "FRA1", slug: "fra1", status: "planned" }
+EOF
 "$ALEMBIC" plan -f inv3.yaml -o p4.json "${B[@]}" --allow-delete >/dev/null
 expect "removing an object plans a delete" "$(ops_count p4.json)" "1"
 "$ALEMBIC" apply -p p4.json "${B[@]}" --allow-delete >/dev/null

@@ -36,3 +36,26 @@ jobs:
       # rebuilds the binary itself (the unit-test run reuses the same out/ name).
       - name: Run e2e
         run: bash test/e2e.sh
+
+  # real alembic-driven e2e: the actual cli spawns the adapter and converges an
+  # inventory. needs the rust cli, so it is split out and runs linux-only; the
+  # compiled cli is cached, so it is built once rather than every run.
+  e2e-alembic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install sqlite
+        run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev
+
+      - name: Install alembic cli
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: alembic-cli
+          version: "0.5.0"
+
+      - name: Setup Carp
+        uses: carpentry-org/setup-carp@v1
+
+      - name: Run alembic-driven e2e
+        run: ALEMBIC="$(command -v alembic-cli)" bash test/e2e-alembic.sh
