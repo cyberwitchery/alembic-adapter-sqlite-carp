@@ -12,6 +12,11 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
 ALEMBIC="${ALEMBIC:-}"
+# a bare command name on PATH (e.g. ALEMBIC=alembic-cli, as ci passes it) -> path
+if [ -n "$ALEMBIC" ] && [ ! -x "$ALEMBIC" ]; then
+  resolved="$(command -v "$ALEMBIC" 2>/dev/null || true)"
+  [ -n "$resolved" ] && ALEMBIC="$resolved"
+fi
 if [ -z "$ALEMBIC" ]; then
   for c in ../alembic/target/release/alembic-cli ../alembic/target/debug/alembic-cli; do
     [ -x "$c" ] && ALEMBIC="$c" && break

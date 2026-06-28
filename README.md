@@ -92,10 +92,7 @@ boundary against a temp sqlite file. ci runs both on linux and macos via
 [`carpentry-org/setup-carp`](https://github.com/carpentry-org/setup-carp).
 
 `test/e2e-alembic.sh` has the real alembic cli spawn the adapter and converge an
-inventory (plan/apply, idempotent re-plan, update, delete). locally it needs the
-alembic cli (`$ALEMBIC` or `../alembic/target/*/alembic-cli`). ci runs it too, in
-a separate linux-only job that `cargo install`s `alembic-cli` from crates.io (the
-compiled binary is cached, so it builds once, not every run).
+inventory (plan/apply, idempotent re-plan, update, delete), also run on ci.
 
 <hr/>
 

@@ -37,25 +37,65 @@ jobs:
       - name: Run e2e
         run: bash test/e2e.sh
 
+  # build the alembic cli in its own job. release codegen of the workspace OOMs a
+  # standard runner, so build the dev profile with no debuginfo and single-job
+  # codegen (same approach as alembic-ops). the binary is cached on the alembic
+  # version, so it only rebuilds on a bump, and is handed to e2e as an artifact.
+  build-cli:
+    name: build alembic-cli
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_INCREMENTAL: "false"
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cache the alembic-cli binary
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: cli/alembic-cli
+          key: alembic-cli-${{ runner.os }}-0.5.0
+      - name: build the alembic cli
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install alembic-cli --version "=0.5.0" --debug --locked \
+            --root "${RUNNER_TEMP}/cargo"
+          mkdir -p cli
+          cp "${RUNNER_TEMP}/cargo/bin/alembic-cli" cli/alembic-cli
+          strip cli/alembic-cli
+      - uses: actions/upload-artifact@v7
+        with:
+          name: alembic-cli
+          path: cli/alembic-cli
+
   # real alembic-driven e2e: the actual cli spawns the adapter and converges an
-  # inventory. needs the rust cli, so it is split out and runs linux-only; the
-  # compiled cli is cached, so it is built once rather than every run.
+  # inventory (plan/apply, idempotent re-plan, update, delete). linux-only.
   e2e-alembic:
+    name: e2e (alembic)
+    needs: build-cli
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install sqlite
         run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev
 
-      - name: Install alembic cli
-        uses: baptiste0928/cargo-install@v3
+      - name: Download the alembic cli
+        uses: actions/download-artifact@v8
         with:
-          crate: alembic-cli
-          version: "0.5.0"
+          name: alembic-cli
+          path: cli
+
+      - name: Put the alembic cli on PATH
+        run: |
+          chmod +x cli/alembic-cli
+          mkdir -p "$HOME/.local/bin"
+          mv cli/alembic-cli "$HOME/.local/bin/alembic-cli"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Setup Carp
         uses: carpentry-org/setup-carp@v1
 
       - name: Run alembic-driven e2e
-        run: ALEMBIC="$(command -v alembic-cli)" bash test/e2e-alembic.sh
+        run: ALEMBIC=alembic-cli bash test/e2e-alembic.sh
