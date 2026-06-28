@@ -1,0 +1,263 @@
+; alembic-sqlite — an external alembic adapter that stores IR objects in SQLite.
+;
+; storage model is generic and vendor-neutral: every IR object lives in a
+; single `alembic_objects` table keyed by (type_name, serialized key). the
+; rowid is the backend id alembic tracks in its state. attrs (including
+; relationship refs, which the engine passes as the target's UID string) are
+; stored and returned verbatim; since desired and observed both carry UIDs, the
+; plan converges. an adapter for a real backend would instead resolve those UIDs
+; to foreign keys using the `state.mappings` carried in every request.
+
+(load "git@github.com:carpentry-org/json@0.4.0")
+(load "git@github.com:carpentry-org/sqlite3@0.1.0")
+
+(Project.config "title" "alembic-adapter-sqlite")
+
+(def ddl-sql
+  "CREATE TABLE IF NOT EXISTS alembic_objects (backend_id INTEGER PRIMARY KEY AUTOINCREMENT, type_name TEXT NOT NULL, key_json TEXT NOT NULL, attrs_json TEXT NOT NULL, UNIQUE(type_name, key_json));")
+(def insert-sql
+  "INSERT INTO alembic_objects (type_name, key_json, attrs_json) VALUES (?1, ?2, ?3);")
+(def update-sql
+  "UPDATE alembic_objects SET key_json=?1, attrs_json=?2 WHERE backend_id=?3;")
+(def delete-sql
+  "DELETE FROM alembic_objects WHERE backend_id=?1;")
+(def select-by-type-sql
+  "SELECT backend_id, key_json, attrs_json FROM alembic_objects WHERE type_name=?1 ORDER BY backend_id;")
+(def find-id-sql
+  "SELECT backend_id FROM alembic_objects WHERE type_name=?1 AND key_json=?2;")
+
+(defn read-all-stdin []
+  (let-do [bytes (the (Array Byte) [])]
+    (while true
+      (let [c (IO.Raw.fgetc IO.Raw.stdin)]
+        (if (= c IO.Raw.EOF)
+          (break)
+          (Array.push-back! &bytes (Byte.from-int c)))))
+    (String.from-bytes &bytes)))
+
+(defn jget-or-null [j k]
+  (match (JSON.get j k)
+    (Maybe.Just v) v
+    (Maybe.Nothing) (JSON.Null)))
+
+(defn jget-str [j k]
+  (match (JSON.get j k)
+    (Maybe.Just v) (Maybe.from (JSON.as-str &v) @"")
+    (Maybe.Nothing) @""))
+
+(defn jget-num [j k]
+  (match (JSON.get j k)
+    (Maybe.Just v) (Maybe.from (JSON.as-num &v) 0.0)
+    (Maybe.Nothing) 0.0))
+
+(defn jstr [j]
+  (match (JSON.str j)
+    (Result.Success s) s
+    (Result.Error _) @"null"))
+
+(defn parse-or-null [s]
+  (match (JSON.parse s)
+    (Result.Success j) j
+    (Result.Error _) (JSON.Null)))
+
+(defn col-long [t]
+  (match-ref t
+    (SQLite3.Type.Integer i) @i
+    _ 0l))
+
+(defn col-text [t]
+  (match-ref t
+    (SQLite3.Type.Text s) @s
+    _ @""))
+
+(defn empty-provision []
+  (JSON.obj [(JSON.entry @"created_fields" (JSON.Arr (the (Array (Box JSON)) [])))
+             (JSON.entry @"created_tags" (JSON.Arr (the (Array (Box JSON)) [])))]))
+
+(defn applied-entry [uid tn mbid]
+  (let [entries (match mbid
+                  (Maybe.Just b)
+                    [(JSON.entry @"uid" (JSON.Str @uid))
+                     (JSON.entry @"type_name" (JSON.Str @tn))
+                     (JSON.entry @"backend_id" (JSON.Num (Double.from-long b)))]
+                  (Maybe.Nothing)
+                    [(JSON.entry @"uid" (JSON.Str @uid))
+                     (JSON.entry @"type_name" (JSON.Str @tn))])]
+    (Box.init (JSON.obj entries))))
+
+(defn apply-report [applied]
+  (JSON.obj [(JSON.entry @"applied" (JSON.Arr applied))
+             (JSON.entry @"provision" (empty-provision))]))
+
+(defn println-json [j]
+  (match (JSON.str j)
+    (Result.Success s) (IO.println &s)
+    (Result.Error _) (IO.println "{\"ok\":false,\"error\":\"serialize failed\"}")))
+
+(defn emit-err [msg]
+  (println-json &(JSON.obj [(JSON.entry @"ok" (JSON.Bool false))
+                            (JSON.entry @"error" (JSON.Str @msg))])))
+
+(defn emit-ok [result]
+  (println-json &(JSON.obj [(JSON.entry @"ok" (JSON.Bool true))
+                            (JSON.entry @"result" result)])))
+
+(defn op-backend-id [op]
+  (match (JSON.get op "backend_id")
+    (Maybe.Just v)
+      (match (JSON.as-num &v)
+        (Maybe.Just n) (Maybe.Just (Double.to-long n))
+        (Maybe.Nothing) (Maybe.Nothing))
+    (Maybe.Nothing) (Maybe.Nothing)))
+
+(defn find-backend-id [db tn keyj]
+  (match (SQLite3.query db find-id-sql
+                        &[(SQLite3.Type.Text @tn) (SQLite3.Type.Text @keyj)])
+    (Result.Success rows)
+      (if (> (Array.length &rows) 0)
+        (Maybe.Just (col-long (Array.unsafe-nth (Array.unsafe-nth &rows 0) 0)))
+        (Maybe.Nothing))
+    (Result.Error _) (Maybe.Nothing)))
+
+(defn resolve-id [db op tn keyj]
+  (match (op-backend-id op)
+    (Maybe.Just id) (Maybe.Just id)
+    (Maybe.Nothing) (find-backend-id db tn keyj)))
+
+(defn op-create [db uid tn op]
+  (let [desired (jget-or-null op "desired")
+        keyj (jstr &(jget-or-null &desired "key"))
+        attrsj (jstr &(jget-or-null &desired "attrs"))]
+    (match (SQLite3.query db insert-sql
+                          &[(SQLite3.Type.Text @tn)
+                            (SQLite3.Type.Text keyj)
+                            (SQLite3.Type.Text attrsj)])
+      (Result.Success _)
+        (Result.Success (applied-entry uid tn (Maybe.Just (SQLite3.last-insert-rowid db))))
+      (Result.Error e) (Result.Error e))))
+
+(defn op-update [db uid tn op]
+  (let [desired (jget-or-null op "desired")
+        keyj (jstr &(jget-or-null &desired "key"))
+        attrsj (jstr &(jget-or-null &desired "attrs"))
+        mbid (resolve-id db op tn &keyj)]
+    (match mbid
+      (Maybe.Just id)
+        (match (SQLite3.query db update-sql
+                              &[(SQLite3.Type.Text keyj)
+                                (SQLite3.Type.Text attrsj)
+                                (SQLite3.Type.Integer id)])
+          (Result.Success _) (Result.Success (applied-entry uid tn (Maybe.Just id)))
+          (Result.Error e) (Result.Error e))
+      (Maybe.Nothing) (Result.Error (fmt "update: object not found for type '%s'" tn)))))
+
+(defn op-delete [db uid tn op]
+  (let [keyj (jstr &(jget-or-null op "key"))
+        mbid (resolve-id db op tn &keyj)]
+    (match mbid
+      (Maybe.Just id)
+        (match (SQLite3.query db delete-sql &[(SQLite3.Type.Integer id)])
+          (Result.Success _) (Result.Success (applied-entry uid tn (Maybe.Just id)))
+          (Result.Error e) (Result.Error e))
+      (Maybe.Nothing) (Result.Success (applied-entry uid tn (Maybe.Nothing))))))
+
+(defn apply-op [db op]
+  (let [opty (jget-str op "op")
+        uid (jget-str op "uid")
+        tn (jget-str op "type_name")]
+    (cond
+      (= &opty "create") (op-create db &uid &tn op)
+      (= &opty "update") (op-update db &uid &tn op)
+      (= &opty "delete") (op-delete db &uid &tn op)
+      (Result.Error (fmt "unknown op '%s'" &opty)))))
+
+(defn do-write [db env]
+  (let [ops (match (JSON.get env "ops")
+              (Maybe.Just v) (Maybe.from (JSON.as-arr &v) (the (Array (Box JSON)) []))
+              (Maybe.Nothing) (the (Array (Box JSON)) []))]
+    (let-do [applied (the (Array (Box JSON)) [])
+             err (the (Maybe String) (Maybe.Nothing))
+             i 0
+             n (Array.length &ops)]
+      (ignore (SQLite3.begin db))
+      (while-do (and (< i n) (Maybe.nothing? &err))
+        (let [op (Box.peek (Array.unsafe-nth &ops i))]
+          (match (apply-op db op)
+            (Result.Success entry) (set! applied (Array.push-back applied entry))
+            (Result.Error e) (set! err (Maybe.Just e))))
+        (set! i (Int.inc i)))
+      (match err
+        (Maybe.Just e) (do (ignore (SQLite3.rollback db)) (Result.Error e))
+        (Maybe.Nothing)
+          (do (ignore (SQLite3.commit db))
+              (Result.Success (apply-report applied)))))))
+
+(defn append-objects [out tn rows]
+  (let-do [result out
+           i 0
+           n (Array.length rows)]
+    (while-do (< i n)
+      (let [row (Array.unsafe-nth rows i)
+            bid (col-long (Array.unsafe-nth row 0))
+            keyj (col-text (Array.unsafe-nth row 1))
+            attrsj (col-text (Array.unsafe-nth row 2))
+            obj (JSON.obj [(JSON.entry @"type_name" (JSON.Str @tn))
+                           (JSON.entry @"key" (parse-or-null &keyj))
+                           (JSON.entry @"attrs" (parse-or-null &attrsj))
+                           (JSON.entry @"backend_id" (JSON.Num (Double.from-long bid)))])]
+        (set! result (Array.push-back result (Box.init obj))))
+      (set! i (Int.inc i)))
+    result))
+
+(defn read-type [db tn acc]
+  (match (SQLite3.query db select-by-type-sql &[(SQLite3.Type.Text @tn)])
+    (Result.Success rows) (append-objects acc tn &rows)
+    (Result.Error _) acc))
+
+(defn do-read [db env]
+  (let [types (match (JSON.get env "types")
+                (Maybe.Just v) (Maybe.from (JSON.as-arr &v) (the (Array (Box JSON)) []))
+                (Maybe.Nothing) (the (Array (Box JSON)) []))]
+    (let-do [out (the (Array (Box JSON)) [])
+             i 0
+             n (Array.length &types)]
+      (while-do (< i n)
+        (let [tn (Maybe.from (JSON.as-str (Box.peek (Array.unsafe-nth &types i))) @"")]
+          (set! out (read-type db &tn out)))
+        (set! i (Int.inc i)))
+      (Result.Success (JSON.Arr out)))))
+
+(defn do-ensure []
+  (Result.Success (empty-provision)))
+
+(defn db-path [setup]
+  (match (JSON.get setup "path")
+    (Maybe.Just v) (Maybe.from (JSON.as-str &v) @"alembic.db")
+    (Maybe.Nothing) @"alembic.db"))
+
+(defn main []
+  (let [input (read-all-stdin)]
+    (match (JSON.parse &input)
+      (Result.Error e) (emit-err &(JSON.parse-error-str &e))
+      (Result.Success env)
+        (let [ver (Double.to-int (jget-num &env "version"))
+              method (jget-str &env "method")
+              setup (jget-or-null &env "setup")
+              path (db-path &setup)]
+          (if (/= ver 1)
+            (emit-err &(fmt "unsupported protocol version %d (expected 1)" ver))
+            (match (SQLite3.open &path)
+              (Result.Error e) (emit-err &e)
+              (Result.Success db)
+                (do
+                  (ignore (SQLite3.query &db ddl-sql &(the (Array SQLite3.Type) [])))
+                  (let [resp (cond
+                               (= &method "read") (do-read &db &env)
+                               (= &method "write") (do-write &db &env)
+                               (= &method "ensure_schema") (do-ensure)
+                               (Result.Error (fmt "unknown method '%s'" &method)))]
+                    (do
+                      (match resp
+                        (Result.Success rj) (emit-ok rj)
+                        (Result.Error e) (emit-err &e))
+                      (SQLite3.close db))))))))))

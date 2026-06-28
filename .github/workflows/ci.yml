@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # the sqlite3 carp library links -lsqlite3; linux runners need the headers.
+      - name: Install sqlite (linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      # setup-carp rewrites git@github.com: deps to https by default, so the
+      # json and sqlite3 loads resolve without an ssh key on the runner.
+      - name: Setup Carp
+        uses: carpentry-org/setup-carp@v1
+
+      - name: Build adapter
+        run: carp -b alembic-sqlite.carp
+
+      - name: Run unit tests
+        run: carp -x test/adapter.carp
+
+      # protocol-level e2e: drives the compiled binary over stdin/stdout.
+      # rebuilds the binary itself (the unit-test run reuses the same out/ name).
+      - name: Run e2e
+        run: bash test/e2e.sh

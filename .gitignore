@@ -1,0 +1,4 @@
+/out
+/alembic-adapter-sqlite
+*.db
+.DS_Store

@@ -1,0 +1,23 @@
+# wire this adapter into alembic as an external backend, e.g.:
+#
+#   make
+#   alembic plan  --backend external --backend-config examples/backend.yaml \
+#     -f inventory.yaml -o plan.json
+#   alembic apply --backend external --backend-config examples/backend.yaml \
+#     -p plan.json
+#
+backend: external
+
+# path to the built adapter binary.
+command: ./alembic-adapter-sqlite
+
+# optional process controls (defaults shown commented out):
+# args: []
+# working_dir: .
+# env: {}
+# timeout_seconds: 120
+
+# the `setup:` block is handed verbatim to the adapter.
+# `path` is the sqlite database file (default: alembic.db).
+setup:
+  path: alembic.db

@@ -1,0 +1,147 @@
+(load "../alembic-sqlite.carp")
+(load "Test.carp")
+(use Test)
+
+(defn parse [s]
+  (Result.unsafe-from-success (JSON.parse s)))
+
+; the handlers return (Result JSON String); unsafe-from-success drops the error
+; payload, so pin its type here to keep codegen from leaving it generic.
+(sig ok-json (Fn [(Result JSON String)] JSON))
+(defn ok-json [r]
+  (Result.unsafe-from-success r))
+
+(defn fresh-db []
+  (let-do [db (Result.expect (SQLite3.open ":memory:")
+                             "test setup failed: could not open :memory: db")]
+    (ignore (SQLite3.query &db ddl-sql &(the (Array SQLite3.Type) [])))
+    db))
+
+(def two-creates
+  "{\"ops\":[{\"op\":\"create\",\"uid\":\"u1\",\"type_name\":\"dcim.site\",\"desired\":{\"key\":{\"name\":\"site-a\"},\"attrs\":{\"name\":\"Site A\",\"asn\":64512,\"active\":true}}},{\"op\":\"create\",\"uid\":\"u2\",\"type_name\":\"dcim.site\",\"desired\":{\"key\":{\"name\":\"site-b\"},\"attrs\":{\"name\":\"Site B\"}}}]}")
+
+(defn seeded-db []
+  (let-do [db (fresh-db)]
+    (ignore (do-write &db &(parse two-creates)))
+    db))
+
+(defn num-at [j path]
+  (match (JSON.get-in j path)
+    (Maybe.Just v) (Maybe.from (JSON.as-num &v) -1.0)
+    (Maybe.Nothing) -1.0))
+
+(defn str-at [j path]
+  (match (JSON.get-in j path)
+    (Maybe.Just v) (Maybe.from (JSON.as-str &v) @"<missing>")
+    (Maybe.Nothing) @"<missing>"))
+
+(defn arr-len [j]
+  (match (JSON.as-arr j)
+    (Maybe.Just a) (Array.length &a)
+    (Maybe.Nothing) -1))
+
+(defn create-result []
+  (let-do [db (fresh-db)
+           j (ok-json (do-write &db &(parse two-creates)))]
+    (SQLite3.close db)
+    j))
+
+(defn after [ops-json]
+  (let-do [db (seeded-db)]
+    (ignore (do-write &db &(parse ops-json)))
+    (let-do [j (ok-json (do-read &db &(parse "{\"types\":[\"dcim.site\"]}")))]
+      (SQLite3.close db)
+      j)))
+
+(defn read-count [type]
+  (let-do [db (seeded-db)
+           j (ok-json (do-read &db &(parse &(fmt "{\"types\":[\"%s\"]}" type))))
+           v (arr-len &j)]
+    (SQLite3.close db)
+    v))
+
+(defn fresh-write [ops-json]
+  (let-do [db (fresh-db)
+           j (ok-json (do-write &db &(parse ops-json)))]
+    (SQLite3.close db)
+    j))
+
+(defn fresh-errs? [ops-json]
+  (let-do [db (fresh-db)
+           e (Result.error? &(do-write &db &(parse ops-json)))]
+    (SQLite3.close db)
+    e))
+
+(defn seeded-errs? [ops-json]
+  (let-do [db (seeded-db)
+           e (Result.error? &(do-write &db &(parse ops-json)))]
+    (SQLite3.close db)
+    e))
+
+(deftest test
+  (assert-true test
+    (Result.success? &(the (Result JSON String) (do-ensure)))
+    "ensure_schema returns ok")
+
+  (assert-equal test 1.0
+    (num-at &(create-result) &[@"applied" @"0" @"backend_id"])
+    "first create gets backend_id 1")
+
+  (assert-equal test 2.0
+    (num-at &(create-result) &[@"applied" @"1" @"backend_id"])
+    "second create gets backend_id 2")
+
+  (assert-equal test "u1"
+    &(str-at &(create-result) &[@"applied" @"0" @"uid"])
+    "applied entry echoes the op uid")
+
+  (assert-equal test 2
+    (read-count "dcim.site")
+    "read returns both seeded objects")
+
+  (assert-equal test 0
+    (read-count "dcim.device")
+    "read of an unknown type is empty, not an error")
+
+  (assert-equal test 64512.0
+    (num-at &(after "{\"ops\":[]}") &[@"0" @"attrs" @"asn"])
+    "integer attr round-trips (stays 64512, not 64512.0)")
+
+  (assert-equal test "site-a"
+    &(str-at &(after "{\"ops\":[]}") &[@"0" @"key" @"name"])
+    "key round-trips through storage")
+
+  (assert-equal test 1.0
+    (num-at &(after "{\"ops\":[]}") &[@"0" @"backend_id"])
+    "read objects carry their backend_id")
+
+  (assert-equal test 65000.0
+    (num-at &(after "{\"ops\":[{\"op\":\"update\",\"uid\":\"u1\",\"type_name\":\"dcim.site\",\"backend_id\":1,\"desired\":{\"key\":{\"name\":\"site-a\"},\"attrs\":{\"asn\":65000}}}]}")
+            &[@"0" @"attrs" @"asn"])
+    "update by backend_id overwrites attrs")
+
+  (assert-equal test 1
+    (arr-len &(after "{\"ops\":[{\"op\":\"delete\",\"uid\":\"u2\",\"type_name\":\"dcim.site\",\"key\":{\"name\":\"site-b\"},\"backend_id\":2}]}"))
+    "delete by backend_id removes the row")
+
+  (assert-equal test "site-a"
+    &(str-at &(after "{\"ops\":[{\"op\":\"delete\",\"uid\":\"u2\",\"type_name\":\"dcim.site\",\"key\":{\"name\":\"site-b\"},\"backend_id\":2}]}")
+             &[@"0" @"key" @"name"])
+    "the surviving object is the one we kept")
+
+  (assert-equal test -1.0
+    (num-at &(fresh-write "{\"ops\":[{\"op\":\"delete\",\"uid\":\"u9\",\"type_name\":\"dcim.site\",\"key\":{\"name\":\"ghost\"}}]}")
+            &[@"applied" @"0" @"backend_id"])
+    "deleting an absent object is a no-op that reports no backend_id")
+
+  (assert-true test
+    (not (fresh-errs? "{\"ops\":[{\"op\":\"delete\",\"uid\":\"u9\",\"type_name\":\"dcim.site\",\"key\":{\"name\":\"ghost\"}}]}"))
+    "deleting an absent object still succeeds")
+
+  (assert-true test
+    (fresh-errs? "{\"ops\":[{\"op\":\"frobnicate\",\"uid\":\"u1\",\"type_name\":\"dcim.site\"}]}")
+    "an unknown op is an error")
+
+  (assert-true test
+    (seeded-errs? "{\"ops\":[{\"op\":\"create\",\"uid\":\"u3\",\"type_name\":\"dcim.site\",\"desired\":{\"key\":{\"name\":\"site-a\"},\"attrs\":{}}}]}")
+    "a duplicate (type_name, key) is rejected"))
