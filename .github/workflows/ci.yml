@@ -50,24 +50,24 @@ jobs:
       CARGO_PROFILE_DEV_INCREMENTAL: "false"
     steps:
       - uses: dtolnay/rust-toolchain@stable
-      - name: cache the alembic-cli binary
+      - name: cache the alembic binary
         id: cache
         uses: actions/cache@v6
         with:
-          path: cli/alembic-cli
-          key: alembic-cli-${{ runner.os }}-0.5.0
+          path: cli/alembic
+          key: alembic-${{ runner.os }}-0.7.0
       - name: build the alembic cli
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          cargo install alembic-cli --version "=0.5.0" --debug --locked \
+          cargo install alembic-cli --version "=0.7.0" --debug --locked \
             --root "${RUNNER_TEMP}/cargo"
           mkdir -p cli
-          cp "${RUNNER_TEMP}/cargo/bin/alembic-cli" cli/alembic-cli
-          strip cli/alembic-cli
+          cp "${RUNNER_TEMP}/cargo/bin/alembic" cli/alembic
+          strip cli/alembic
       - uses: actions/upload-artifact@v7
         with:
           name: alembic-cli
-          path: cli/alembic-cli
+          path: cli/alembic
 
   # real alembic-driven e2e: the actual cli spawns the adapter and converges an
   # inventory (plan/apply, idempotent re-plan, update, delete). linux-only.
@@ -89,13 +89,13 @@ jobs:
 
       - name: Put the alembic cli on PATH
         run: |
-          chmod +x cli/alembic-cli
+          chmod +x cli/alembic
           mkdir -p "$HOME/.local/bin"
-          mv cli/alembic-cli "$HOME/.local/bin/alembic-cli"
+          mv cli/alembic "$HOME/.local/bin/alembic"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Setup Carp
         uses: carpentry-org/setup-carp@v1
 
       - name: Run alembic-driven e2e
-        run: ALEMBIC=alembic-cli bash test/e2e-alembic.sh
+        run: ALEMBIC=alembic bash test/e2e-alembic.sh

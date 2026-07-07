@@ -4,26 +4,27 @@
 # plan is empty (idempotent) and that update/delete flow through.
 #
 # needs the alembic cli built. point $ALEMBIC at it, or this script looks for it
-# under ../alembic/target/{release,debug}/alembic-cli. CI runs this in the
-# e2e-alembic job against a cargo-installed alembic-cli.
+# under ../alembic/target/{release,debug}/alembic. CI runs this in the
+# e2e-alembic job against a cargo-installed alembic cli.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
 ALEMBIC="${ALEMBIC:-}"
-# a bare command name on PATH (e.g. ALEMBIC=alembic-cli, as ci passes it) -> path
+# a bare command name on PATH (e.g. ALEMBIC=alembic, as ci passes it) -> path
 if [ -n "$ALEMBIC" ] && [ ! -x "$ALEMBIC" ]; then
   resolved="$(command -v "$ALEMBIC" 2>/dev/null || true)"
   [ -n "$resolved" ] && ALEMBIC="$resolved"
 fi
 if [ -z "$ALEMBIC" ]; then
-  for c in ../alembic/target/release/alembic-cli ../alembic/target/debug/alembic-cli; do
+  # absolute, because the run below cds into a temp workdir
+  for c in "$ROOT/../alembic/target/release/alembic" "$ROOT/../alembic/target/debug/alembic"; do
     [ -x "$c" ] && ALEMBIC="$c" && break
   done
 fi
 if [ -z "$ALEMBIC" ] || [ ! -x "$ALEMBIC" ]; then
-  echo "SKIP: alembic cli not found. set \$ALEMBIC to the alembic-cli binary."
+  echo "SKIP: alembic cli not found. set \$ALEMBIC to the alembic binary."
   exit 0
 fi
 
