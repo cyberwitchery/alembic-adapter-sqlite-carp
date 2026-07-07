@@ -4,8 +4,8 @@
 # plan is empty (idempotent) and that update/delete flow through.
 #
 # needs the alembic cli built. point $ALEMBIC at it, or this script looks for it
-# under ../alembic/target/{release,debug}/alembic-cli. not run in CI (the carp
-# job has no rust toolchain); run it locally to validate against the real engine.
+# under ../alembic/target/{release,debug}/alembic-cli. CI runs this in the
+# e2e-alembic job against a cargo-installed alembic-cli.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
