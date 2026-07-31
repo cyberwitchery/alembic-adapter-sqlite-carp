@@ -230,6 +230,15 @@
 (defn do-ensure []
   (Result.Success (empty-provision)))
 
+; preview reports what ensure_schema would provision. the storage table is not
+; ir schema, so the answer is the same empty report ensure_schema gives.
+(defn do-preview []
+  (Result.Success (empty-provision)))
+
+; read+write adapter, the role the host assumes when capabilities is unanswered.
+(defn do-capabilities []
+  (Result.Success (JSON.obj [(JSON.entry @"role" (JSON.Str @"adapter"))])))
+
 (defn db-path [setup]
   (match (JSON.get setup "path")
     (Maybe.Just v) (Maybe.from (JSON.as-str &v) @"alembic.db")
@@ -255,6 +264,8 @@
                                (= &method "read") (do-read &db &env)
                                (= &method "write") (do-write &db &env)
                                (= &method "ensure_schema") (do-ensure)
+                               (= &method "preview_schema") (do-preview)
+                               (= &method "capabilities") (do-capabilities)
                                (Result.Error (fmt "unknown method '%s'" &method)))]
                     (do
                       (match resp

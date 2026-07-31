@@ -144,4 +144,14 @@
 
   (assert-true test
     (seeded-errs? "{\"ops\":[{\"op\":\"create\",\"uid\":\"u3\",\"type_name\":\"dcim.site\",\"desired\":{\"key\":{\"name\":\"site-a\"},\"attrs\":{}}}]}")
-    "a duplicate (type_name, key) is rejected"))
+    "a duplicate (type_name, key) is rejected")
+
+  (assert-equal test 0
+    (match (JSON.get-in &(ok-json (do-preview)) &[@"created_fields"])
+      (Maybe.Just v) (arr-len &v)
+      (Maybe.Nothing) -1)
+    "preview_schema reports an empty provision")
+
+  (assert-equal test "adapter"
+    &(str-at &(ok-json (do-capabilities)) &[@"role"])
+    "capabilities reports the adapter role"))

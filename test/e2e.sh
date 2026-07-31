@@ -65,6 +65,14 @@ check "read shows only the survivor" \
   "$(env '"method":"read","schema":{"types":{}},"state":{"mappings":{}},"types":["dcim.site"]')" \
   "len(r['result'])==1 and r['result'][0]['key']['name']=='site-a'"
 
+check "preview_schema returns the same empty provision as ensure_schema" \
+  "$(env '"method":"preview_schema","schema":{"types":{}}')" \
+  "r['ok'] and r['result']['created_fields']==[] and r['result']['created_tags']==[]"
+
+check "capabilities reports the adapter role" \
+  "$(env '"method":"capabilities"')" \
+  "r['ok'] and r['result']['role']=='adapter'"
+
 check "unknown method is an error" \
   "$(env '"method":"teleport","schema":{"types":{}}')" \
   "r['ok'] is False and 'error' in r"

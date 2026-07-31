@@ -55,11 +55,11 @@ jobs:
         uses: actions/cache@v6
         with:
           path: cli/alembic
-          key: alembic-${{ runner.os }}-0.7.0
+          key: alembic-${{ runner.os }}-0.8.0
       - name: build the alembic cli
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          cargo install alembic-cli --version "=0.7.0" --debug --locked \
+          cargo install alembic-cli --version "=0.8.0" --debug --locked \
             --root "${RUNNER_TEMP}/cargo"
           mkdir -p cli
           cp "${RUNNER_TEMP}/cargo/bin/alembic" cli/alembic

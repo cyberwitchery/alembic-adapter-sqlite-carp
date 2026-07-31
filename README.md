@@ -35,7 +35,7 @@ ride along in every request.
 
 an external adapter is a standalone binary the alembic cli spawns as a
 subprocess: it reads a single json request on stdin and writes a single json
-response on stdout. three methods (protocol v1):
+response on stdout. this adapter implements all five methods (protocol v1):
 
 - `read` — `SELECT` the requested types and return them as observed objects so
   the engine can diff against the desired inventory.
@@ -46,6 +46,9 @@ response on stdout. three methods (protocol v1):
 - `ensure_schema` — creates the storage table. returns an empty provision report;
   the table is also created on every connection, so read and write work without a
   prior `ensure_schema`.
+- `preview_schema` — reports what `ensure_schema` would provision: the same
+  empty report (the storage table is not ir schema).
+- `capabilities` — reports the read+write `adapter` role.
 
 see the alembic
 [external adapter docs](https://github.com/cyberwitchery/alembic/blob/main/docs/external-adapters.md)
