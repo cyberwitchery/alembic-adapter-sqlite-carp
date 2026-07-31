@@ -37,6 +37,49 @@ jobs:
       - name: Run e2e
         run: bash test/e2e.sh
 
+  # protocol conformance: the runner that ships alongside alembic checks the
+  # compiled adapter against the external-adapter contract. the runner binary is
+  # cached on its version, like the alembic cli below.
+  conformance:
+    name: conformance
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_DEV_INCREMENTAL: "false"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install sqlite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: cache the conformance runner
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: bin/alembic-adapter-test
+          key: alembic-adapter-test-${{ runner.os }}-0.8.0
+
+      - name: build alembic-adapter-test
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install alembic-adapter-test --version "=0.8.0" --debug --locked \
+            --root "${RUNNER_TEMP}/cargo"
+          mkdir -p bin
+          cp "${RUNNER_TEMP}/cargo/bin/alembic-adapter-test" bin/alembic-adapter-test
+          strip bin/alembic-adapter-test
+
+      - name: Setup Carp
+        uses: carpentry-org/setup-carp@v1
+
+      - name: Build adapter
+        run: carp -b alembic-sqlite.carp
+
+      - name: Run conformance
+        run: ./bin/alembic-adapter-test -- ./out/alembic-adapter-sqlite
+
   # build the alembic cli in its own job. release codegen of the workspace OOMs a
   # standard runner, so build the dev profile with no debuginfo and single-job
   # codegen (same approach as alembic-ops). the binary is cached on the alembic
