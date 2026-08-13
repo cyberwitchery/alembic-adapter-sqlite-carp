@@ -6,6 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # the alembic release this adapter is checked against. every release attaches
+  # static binaries, so the host jobs below need no rust toolchain and no build.
+  # bump this deliberately: a red run then means a real protocol break, not
+  # upstream noise.
+  ALEMBIC_VERSION: v0.8.0
+  # ubuntu-latest runners are x86_64.
+  ALEMBIC_TARGET: x86_64-unknown-linux-gnu
+
 jobs:
   test:
     strategy:
@@ -38,38 +47,24 @@ jobs:
         run: bash test/e2e.sh
 
   # protocol conformance: the runner that ships alongside alembic checks the
-  # compiled adapter against the external-adapter contract. the runner binary is
-  # cached on its version, like the alembic cli below.
+  # compiled adapter against the external-adapter contract.
   conformance:
     name: conformance
     runs-on: ubuntu-latest
-    env:
-      CARGO_BUILD_JOBS: "1"
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_DEV_INCREMENTAL: "false"
     steps:
       - uses: actions/checkout@v6
 
       - name: Install sqlite
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: cache the conformance runner
-        id: cache
-        uses: actions/cache@v6
-        with:
-          path: bin/alembic-adapter-test
-          key: alembic-adapter-test-${{ runner.os }}-0.8.0
-
-      - name: build alembic-adapter-test
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Fetch alembic-adapter-test
         run: |
-          cargo install alembic-adapter-test --version "=0.8.0" --debug --locked \
-            --root "${RUNNER_TEMP}/cargo"
+          name="alembic-adapter-test-${ALEMBIC_VERSION}-${ALEMBIC_TARGET}"
+          curl -sSfL -o runner.tar.gz \
+            "https://github.com/cyberwitchery/alembic/releases/download/${ALEMBIC_VERSION}/${name}.tar.gz"
+          tar xzf runner.tar.gz
           mkdir -p bin
-          cp "${RUNNER_TEMP}/cargo/bin/alembic-adapter-test" bin/alembic-adapter-test
-          strip bin/alembic-adapter-test
+          mv "${name}/alembic-adapter-test" bin/
 
       - name: Setup Carp
         uses: carpentry-org/setup-carp@v1
@@ -80,43 +75,10 @@ jobs:
       - name: Run conformance
         run: ./bin/alembic-adapter-test -- ./out/alembic-adapter-sqlite
 
-  # build the alembic cli in its own job. release codegen of the workspace OOMs a
-  # standard runner, so build the dev profile with no debuginfo and single-job
-  # codegen (same approach as alembic-ops). the binary is cached on the alembic
-  # version, so it only rebuilds on a bump, and is handed to e2e as an artifact.
-  build-cli:
-    name: build alembic-cli
-    runs-on: ubuntu-latest
-    env:
-      CARGO_BUILD_JOBS: "1"
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_DEV_INCREMENTAL: "false"
-    steps:
-      - uses: dtolnay/rust-toolchain@stable
-      - name: cache the alembic binary
-        id: cache
-        uses: actions/cache@v6
-        with:
-          path: cli/alembic
-          key: alembic-${{ runner.os }}-0.8.0
-      - name: build the alembic cli
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          cargo install alembic-cli --version "=0.8.0" --debug --locked \
-            --root "${RUNNER_TEMP}/cargo"
-          mkdir -p cli
-          cp "${RUNNER_TEMP}/cargo/bin/alembic" cli/alembic
-          strip cli/alembic
-      - uses: actions/upload-artifact@v7
-        with:
-          name: alembic-cli
-          path: cli/alembic
-
   # real alembic-driven e2e: the actual cli spawns the adapter and converges an
   # inventory (plan/apply, idempotent re-plan, update, delete). linux-only.
   e2e-alembic:
     name: e2e (alembic)
-    needs: build-cli
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -124,17 +86,14 @@ jobs:
       - name: Install sqlite
         run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev
 
-      - name: Download the alembic cli
-        uses: actions/download-artifact@v8
-        with:
-          name: alembic-cli
-          path: cli
-
-      - name: Put the alembic cli on PATH
+      - name: Fetch the alembic cli
         run: |
-          chmod +x cli/alembic
+          name="alembic-${ALEMBIC_VERSION}-${ALEMBIC_TARGET}"
+          curl -sSfL -o alembic.tar.gz \
+            "https://github.com/cyberwitchery/alembic/releases/download/${ALEMBIC_VERSION}/${name}.tar.gz"
+          tar xzf alembic.tar.gz
           mkdir -p "$HOME/.local/bin"
-          mv cli/alembic "$HOME/.local/bin/alembic"
+          mv "${name}/alembic" "$HOME/.local/bin/alembic"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Setup Carp

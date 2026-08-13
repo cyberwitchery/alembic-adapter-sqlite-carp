@@ -95,7 +95,10 @@ boundary against a temp sqlite file. ci runs both on linux and macos via
 [`carpentry-org/setup-carp`](https://github.com/carpentry-org/setup-carp).
 
 `test/e2e-alembic.sh` has the real alembic cli spawn the adapter and converge an
-inventory (plan/apply, idempotent re-plan, update, delete), also run on ci.
+inventory (plan/apply, idempotent re-plan, update, delete), also run on ci, next
+to a conformance run of `alembic-adapter-test`. both take their binaries from an
+[alembic release](https://github.com/cyberwitchery/alembic/releases), pinned in
+`.github/workflows/ci.yml`.
 
 <hr/>
 
