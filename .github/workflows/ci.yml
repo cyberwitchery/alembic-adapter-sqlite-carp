@@ -11,7 +11,7 @@ env:
   # static binaries, so the host jobs below need no rust toolchain and no build.
   # bump this deliberately: a red run then means a real protocol break, not
   # upstream noise.
-  ALEMBIC_VERSION: v0.8.0
+  ALEMBIC_VERSION: v0.10.0
   # ubuntu-latest runners are x86_64.
   ALEMBIC_TARGET: x86_64-unknown-linux-gnu
 
