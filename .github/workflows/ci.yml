@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   # the alembic release this adapter is checked against. every release attaches
   # static binaries, so the host jobs below need no rust toolchain and no build.
@@ -23,7 +26,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # the sqlite3 carp library links -lsqlite3; linux runners need the headers.
       - name: Install sqlite (linux)
@@ -33,7 +36,7 @@ jobs:
       # setup-carp rewrites git@github.com: deps to https by default, so the
       # json and sqlite3 loads resolve without an ssh key on the runner.
       - name: Setup Carp
-        uses: carpentry-org/setup-carp@v1
+        uses: carpentry-org/setup-carp@4e0899a08e14999a11349790d0a7a86895b789e5 # v1
 
       - name: Build adapter
         run: carp -b alembic-sqlite.carp
@@ -52,7 +55,7 @@ jobs:
     name: conformance
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install sqlite
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
@@ -67,7 +70,7 @@ jobs:
           mv "${name}/alembic-adapter-test" bin/
 
       - name: Setup Carp
-        uses: carpentry-org/setup-carp@v1
+        uses: carpentry-org/setup-carp@4e0899a08e14999a11349790d0a7a86895b789e5 # v1
 
       - name: Build adapter
         run: carp -b alembic-sqlite.carp
@@ -81,7 +84,7 @@ jobs:
     name: e2e (alembic)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install sqlite
         run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev
@@ -97,7 +100,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Setup Carp
-        uses: carpentry-org/setup-carp@v1
+        uses: carpentry-org/setup-carp@4e0899a08e14999a11349790d0a7a86895b789e5 # v1
 
       - name: Run alembic-driven e2e
         run: ALEMBIC=alembic bash test/e2e-alembic.sh
