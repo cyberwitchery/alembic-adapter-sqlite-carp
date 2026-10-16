@@ -62,9 +62,9 @@
 
 (defn fresh-write [ops-json]
   (let-do [db (fresh-db)
-           j (ok-json (do-write &db &(parse ops-json)))]
+           r (the (Result JSON String) (do-write &db &(parse ops-json)))]
     (SQLite3.close db)
-    j))
+    r))
 
 (defn fresh-errs? [ops-json]
   (let-do [db (fresh-db)
@@ -129,14 +129,13 @@
              &[@"0" @"key" @"name"])
     "the surviving object is the one we kept")
 
-  (assert-equal test -1.0
-    (num-at &(fresh-write "{\"ops\":[{\"op\":\"delete\",\"uid\":\"u9\",\"type_name\":\"dcim.site\",\"key\":{\"name\":\"ghost\"}}]}")
-            &[@"applied" @"0" @"backend_id"])
-    "deleting an absent object is a no-op that reports no backend_id")
-
   (assert-true test
-    (not (fresh-errs? "{\"ops\":[{\"op\":\"delete\",\"uid\":\"u9\",\"type_name\":\"dcim.site\",\"key\":{\"name\":\"ghost\"}}]}"))
-    "deleting an absent object still succeeds")
+    (match (fresh-write "{\"ops\":[{\"op\":\"delete\",\"uid\":\"u9\",\"type_name\":\"dcim.site\",\"key\":{\"name\":\"ghost\"}}]}")
+      (Result.Success j)
+        (and (= "u9" &(str-at &j &[@"applied" @"0" @"uid"]))
+             (Maybe.nothing? &(JSON.get-in &j &[@"applied" @"0" @"backend_id"])))
+      (Result.Error _) false)
+    "deleting an absent object succeeds and reports no backend_id")
 
   (assert-true test
     (fresh-errs? "{\"ops\":[{\"op\":\"frobnicate\",\"uid\":\"u1\",\"type_name\":\"dcim.site\"}]}")

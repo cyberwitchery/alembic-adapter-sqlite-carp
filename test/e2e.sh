@@ -39,7 +39,7 @@ env() { printf '{"version":1,"setup":{"path":"%s"},%s}' "$DB" "$1"; }
 
 check "ensure_schema returns ok" \
   "$(env '"method":"ensure_schema","schema":{"types":{}}')" \
-  "r['ok'] is True"
+  "r == {'ok': True, 'result': {'created_fields': [], 'created_tags': []}}"
 
 check "write create returns sequential rowids" \
   "$(env '"method":"write","schema":{"types":{}},"state":{"mappings":{}},"ops":[{"op":"create","uid":"u1","type_name":"dcim.site","desired":{"key":{"name":"site-a"},"attrs":{"asn":64512,"active":true}}},{"op":"create","uid":"u2","type_name":"dcim.site","desired":{"key":{"name":"site-b"},"attrs":{}}}]')" \
@@ -47,7 +47,7 @@ check "write create returns sequential rowids" \
 
 check "read returns both objects, ints intact" \
   "$(env '"method":"read","schema":{"types":{}},"state":{"mappings":{}},"types":["dcim.site"]')" \
-  "len(r['result'])==2 and r['result'][0]['attrs']['asn']==64512 and r['result'][0]['attrs']['active'] is True and r['result'][0]['backend_id']==1"
+  "len(r['result'])==2 and r['result'][0]['attrs']['asn']==64512 and type(r['result'][0]['attrs']['asn']) is int and r['result'][0]['attrs']['active'] is True and r['result'][0]['backend_id']==1"
 
 check "update by backend_id overwrites attrs" \
   "$(env '"method":"write","schema":{"types":{}},"state":{"mappings":{}},"ops":[{"op":"update","uid":"u1","type_name":"dcim.site","backend_id":1,"desired":{"key":{"name":"site-a"},"attrs":{"asn":65000}}}]')" \
