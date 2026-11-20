@@ -193,8 +193,7 @@
               (Result.Success (apply-report applied)))))))
 
 (defn append-objects [out tn rows]
-  (let-do [result out
-           i 0
+  (let-do [i 0
            n (Array.length rows)]
     (while-do (< i n)
       (let [row (Array.unsafe-nth rows i)
@@ -205,27 +204,34 @@
                            (JSON.entry @"key" (parse-or-null &keyj))
                            (JSON.entry @"attrs" (parse-or-null &attrsj))
                            (JSON.entry @"backend_id" (JSON.Num (Double.from-long bid)))])]
-        (set! result (Array.push-back result (Box.init obj))))
-      (set! i (Int.inc i)))
-    result))
+        (Array.push-back! out (Box.init obj)))
+      (set! i (Int.inc i)))))
 
-(defn read-type [db tn acc]
+
+; a failed query fails the read: an empty answer would plan every object as a
+; create, and apply would insert duplicates.
+(defn read-type [db tn out]
   (match (SQLite3.query db select-by-type-sql &[(SQLite3.Type.Text @tn)])
-    (Result.Success rows) (append-objects acc tn &rows)
-    (Result.Error _) acc))
+    (Result.Success rows) (Result.Success (append-objects out tn &rows))
+    (Result.Error e) (Result.Error (fmt "read %s: %s" tn &e))))
 
 (defn do-read [db env]
   (let [types (match (JSON.get env "types")
                 (Maybe.Just v) (Maybe.from (JSON.as-arr &v) (the (Array (Box JSON)) []))
                 (Maybe.Nothing) (the (Array (Box JSON)) []))]
     (let-do [out (the (Array (Box JSON)) [])
+             err (the (Maybe String) (Maybe.Nothing))
              i 0
              n (Array.length &types)]
-      (while-do (< i n)
+      (while-do (and (< i n) (Maybe.nothing? &err))
         (let [tn (Maybe.from (JSON.as-str (Box.peek (Array.unsafe-nth &types i))) @"")]
-          (set! out (read-type db &tn out)))
+          (match (read-type db &tn &out)
+            (Result.Success _) ()
+            (Result.Error e) (set! err (Maybe.Just e))))
         (set! i (Int.inc i)))
-      (Result.Success (JSON.Arr out)))))
+      (match err
+        (Maybe.Just e) (Result.Error e)
+        (Maybe.Nothing) (Result.Success (JSON.Arr out))))))
 
 (defn do-ensure []
   (Result.Success (empty-provision)))

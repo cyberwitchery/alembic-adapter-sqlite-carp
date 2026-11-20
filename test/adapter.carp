@@ -60,6 +60,14 @@
     (SQLite3.close db)
     v))
 
+(defn read-fails-without-the-table []
+  (let-do [db (seeded-db)]
+    (ignore (SQLite3.query &db "DROP TABLE alembic_objects" &(the (Array SQLite3.Type) [])))
+    (let-do [failed (Result.error? &(the (Result JSON String)
+                                         (do-read &db &(parse "{\"types\":[\"dcim.site\"]}"))))]
+      (SQLite3.close db)
+      failed)))
+
 (defn fresh-write [ops-json]
   (let-do [db (fresh-db)
            r (the (Result JSON String) (do-write &db &(parse ops-json)))]
@@ -102,6 +110,10 @@
   (assert-equal test 0
     (read-count "dcim.device")
     "read of an unknown type is empty, not an error")
+
+  (assert-true test
+    (read-fails-without-the-table)
+    "a read whose query fails is an error, not an empty answer")
 
   (assert-equal test 64512.0
     (num-at &(after "{\"ops\":[]}") &[@"0" @"attrs" @"asn"])
